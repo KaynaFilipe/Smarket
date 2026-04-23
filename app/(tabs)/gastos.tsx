@@ -21,6 +21,7 @@ const formatarMoeda = (valor: number) =>
 export default function Gastos() {
   const router = useRouter();
   const { carregandoDados, valorGasto, gastosPorCategoria } = useBudget();
+  // A primeira categoria ja chega ordenada pelo contexto, entao ela representa o maior gasto.
   const maiorCategoria = gastosPorCategoria[0];
 
   if (carregandoDados) {
@@ -68,6 +69,7 @@ export default function Gastos() {
           <Text style={styles.listSubtitle}>Toque para ver os itens de cada categoria</Text>
         </View>
 
+        {/* Cada card abre a tela de detalhe reutilizando o nome da categoria como parametro da rota. */}
         {gastosPorCategoria.map((item, index) => (
           <TouchableOpacity
             key={item.nome}

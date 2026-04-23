@@ -1,7 +1,7 @@
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { signOut } from "firebase/auth";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -37,11 +37,13 @@ export default function Home() {
   } = useBudget();
   const [categoriaAtiva, setCategoriaAtiva] = useState("Tudo");
   const [orcamentoInput, setOrcamentoInput] = useState(String(orcamentoTotal));
+  const saindoRef = useRef(false);
 
   useEffect(() => {
     setOrcamentoInput(String(orcamentoTotal));
   }, [orcamentoTotal]);
 
+  // O filtro permite visualizar todos os itens ou apenas uma categoria por vez.
   const percentualGasto = orcamentoTotal === 0 ? 0 : (valorGasto / orcamentoTotal) * 100;
 
   const itemsFiltrados =
@@ -71,12 +73,18 @@ export default function Home() {
   };
 
   const sairDaConta = async () => {
-    try {
-      await signOut(auth);
-      router.replace("/");
-    } catch {
-      alert("Nao foi possivel sair agora.");
+    if (saindoRef.current) {
+      return;
     }
+
+    saindoRef.current = true;
+    router.replace("/");
+
+    // A navegacao acontece primeiro para deixar a saida imediata.
+    void signOut(auth).catch(() => {
+      saindoRef.current = false;
+      alert("Nao foi possivel sair agora.");
+    });
   };
 
   return (
@@ -84,7 +92,10 @@ export default function Home() {
       <View style={styles.card}>
         <View style={styles.headerRow}>
           <View />
-          <TouchableOpacity style={styles.logoutButton} onPress={sairDaConta}>
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={sairDaConta}
+            disabled={false}>
             <IconSymbol
               name="rectangle.portrait.and.arrow.right"
               size={18}
@@ -149,6 +160,7 @@ export default function Home() {
           showsHorizontalScrollIndicator={false}
           style={styles.categoriesScroll}
           contentContainerStyle={styles.categoriesContainer}>
+          {/* "Tudo" reaproveita a mesma listagem sem criar uma categoria extra no banco. */}
           {["Tudo", ...categorias].map((categoria) => (
             <TouchableOpacity
               key={categoria}
@@ -174,6 +186,7 @@ export default function Home() {
               <Text style={styles.emptyStateText}>Nenhum item encontrado nesta categoria</Text>
             </View>
           ) : (
+            // Os controles alteram apenas o estado global; o contexto cuida da persistencia no Firestore.
             itemsFiltrados.map((item) => (
               <View key={item.id} style={styles.item}>
                 <View style={styles.itemInfo}>
@@ -218,7 +231,11 @@ export default function Home() {
 
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => router.push("/(tabs)/add")}
+          onPress={() => {
+            if (!saindoRef.current) {
+              router.push("/(tabs)/add");
+            }
+          }}
           activeOpacity={0.7}>
           <Text style={styles.addText}>+</Text>
         </TouchableOpacity>

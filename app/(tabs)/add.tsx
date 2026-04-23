@@ -25,6 +25,7 @@ export default function AddItemScreen() {
     const valor = Number(valorUnitario.replace(",", "."));
     const quantidadeNumerica = Number(quantidade);
 
+    // As validacoes aqui evitam gravar itens inconsistentes no estado global e no Firebase.
     if (!nome.trim()) {
       Alert.alert("Nome obrigatorio", "Informe o nome do item.");
       return;
@@ -78,6 +79,7 @@ export default function AddItemScreen() {
 
           <Text style={styles.label}>Categoria</Text>
           <View style={styles.categories}>
+            {/* As opcoes sao carregadas do contexto para manter telas e regras sincronizadas. */}
             {categorias.map((opcao) => (
               <TouchableOpacity
                 key={opcao}

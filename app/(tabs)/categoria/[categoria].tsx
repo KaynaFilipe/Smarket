@@ -20,6 +20,7 @@ const formatarMoeda = (valor: number) =>
 export default function CategoriaDetalheScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ categoria?: string }>();
+  // A rota dinamica chega como string; aqui convertemos para o tipo usado pelo contexto.
   const categoria = (params.categoria ?? "Mercado") as Categoria;
   const { carregandoDados, listarItensPorCategoria, totalCategoria } = useBudget();
   const itens = listarItensPorCategoria(categoria);

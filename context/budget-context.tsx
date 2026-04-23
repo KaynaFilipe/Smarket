@@ -1,5 +1,5 @@
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import React, {
   createContext,
   ReactNode,
@@ -73,10 +73,14 @@ const BudgetContext = createContext<BudgetContextValue | undefined>(undefined);
 const calcularValorItem = (item: Pick<Item, "quantidade" | "valorUnitario">) =>
   item.quantidade * item.valorUnitario;
 
+// Garante que as cores dos itens continuem coerentes mesmo ao recarregar dados antigos.
 const normalizarItem = (item: Item): Item => ({
   ...item,
   cor: corCategoria[item.categoria],
 });
+
+const usuarioDocRef = (uid: string) => doc(db, "usuarios", uid);
+const orcamentoDocRef = (uid: string) => doc(db, "usuarios", uid, "orcamento", "atual");
 
 export function BudgetProvider({ children }: { children: ReactNode }) {
   const [orcamentoTotal, setOrcamentoTotal] = useState(0);
@@ -87,6 +91,7 @@ export function BudgetProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      // Evita gravar no Firestore antes de terminar a leitura inicial do usuario atual.
       podeSalvarRef.current = false;
       setCarregandoDados(true);
 
@@ -99,9 +104,35 @@ export function BudgetProvider({ children }: { children: ReactNode }) {
       }
 
       usuarioAtualRef.current = user.uid;
-      const documentoRef = doc(db, "orcamentos", user.uid);
+      const perfilRef = usuarioDocRef(user.uid);
+      const documentoRef = orcamentoDocRef(user.uid);
 
       try {
+        const perfilSnapshot = await getDoc(perfilRef);
+
+        // Se o perfil nao existir ainda, o app cria uma estrutura basica para contas antigas.
+        if (!perfilSnapshot.exists()) {
+          await setDoc(
+            perfilRef,
+            {
+              email: user.email ?? "",
+              perfil: "padrao",
+              criadoEm: serverTimestamp(),
+              atualizadoEm: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        } else {
+          await setDoc(
+            perfilRef,
+            {
+              email: user.email ?? "",
+              atualizadoEm: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+
         const snapshot = await getDoc(documentoRef);
 
         if (snapshot.exists()) {
@@ -111,7 +142,10 @@ export function BudgetProvider({ children }: { children: ReactNode }) {
         } else {
           setOrcamentoTotal(0);
           setItems([]);
-          await setDoc(documentoRef, dadosIniciais);
+          await setDoc(documentoRef, {
+            ...dadosIniciais,
+            atualizadoEm: serverTimestamp(),
+          });
         }
       } catch {
         setOrcamentoTotal(0);
@@ -134,9 +168,10 @@ export function BudgetProvider({ children }: { children: ReactNode }) {
 
     const salvar = async () => {
       try {
-        await setDoc(doc(db, "orcamentos", uid), {
+        await setDoc(orcamentoDocRef(uid), {
           orcamentoTotal,
           items,
+          atualizadoEm: serverTimestamp(),
         });
       } catch {
         return;
@@ -156,6 +191,7 @@ export function BudgetProvider({ children }: { children: ReactNode }) {
   const gastosPorCategoria = useMemo(() => {
     return categorias
       .map((categoria) => {
+        // O resumo da categoria reaproveita a mesma fonte da tela principal.
         const itensDaCategoria = items.filter((item) => item.categoria === categoria);
         const valor = itensDaCategoria.reduce((total, item) => total + calcularValorItem(item), 0);
         const quantidadeItens = itensDaCategoria.reduce((total, item) => total + item.quantidade, 0);
@@ -185,6 +221,7 @@ export function BudgetProvider({ children }: { children: ReactNode }) {
         setOrcamentoTotal(valor);
       },
       adicionarItem: (item) => {
+        // Cada item novo recebe um id simples e a cor padrao da categoria escolhida.
         setItems((estadoAtual) => [
           ...estadoAtual,
           normalizarItem({

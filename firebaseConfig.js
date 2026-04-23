@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
-
+// Configuracao do projeto Firebase usada por autenticacao e banco de dados.
 const firebaseConfig = {
   apiKey: "AIzaSyCkgt_a36ifSwsxqbkvJHo4I7TY2nPoXIA",
   authDomain: "smarket-efee5.firebaseapp.com",
@@ -15,5 +15,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
+// `auth` controla login, registro e logout.
 export const auth = getAuth(app);
+// `db` centraliza o acesso ao Firestore em todo o app.
 export const db = getFirestore(app);
