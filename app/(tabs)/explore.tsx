@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import { Platform, StyleSheet } from 'react-native';
 
+import { BackButton } from '@/components/back-button';
 import { Collapsible } from '@/components/ui/collapsible';
 import { ExternalLink } from '@/components/external-link';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
@@ -21,6 +22,7 @@ export default function TabTwoScreen() {
           style={styles.headerImage}
         />
       }>
+      <BackButton fallback="/(tabs)" />
       <ThemedView style={styles.titleContainer}>
         <ThemedText
           type="title"

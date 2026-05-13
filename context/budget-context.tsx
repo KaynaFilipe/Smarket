@@ -1,5 +1,15 @@
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
 import React, {
   createContext,
   ReactNode,
@@ -13,17 +23,43 @@ import React, {
 import { auth, db } from "../firebaseConfig";
 
 export type Categoria = "Mercado" | "Frios" | "Limpeza" | "Pets";
+export type StatusProduto = "pendente" | "concluido";
+export type StatusLista = "on_market" | "finalizada";
 
-export type Item = {
+export type ProdutoCompra = {
   id: number;
   nome: string;
-  cor: string;
-  quantidade: number;
   categoria: Categoria;
-  valorUnitario: number;
+  quantidade: number;
+  cor: string;
+  status: StatusProduto;
+  valorUnitario?: number;
+  subtotal?: number;
+  compradoEm?: string;
 };
 
-type NovoItem = Omit<Item, "id" | "cor">;
+export type ListaCompra = {
+  id: string;
+  nome: string;
+  data: string;
+  status: StatusLista;
+  produtos: ProdutoCompra[];
+  categorias: Categoria[];
+  valores: {
+    total: number;
+    quantidadeProdutos: number;
+  };
+  totais: {
+    totalFinal: number;
+    porCategoria: Record<string, number>;
+  };
+  notaFiscalImage?: string | null;
+  criadaEm?: unknown;
+  atualizadaEm?: unknown;
+  finalizadaEm?: unknown;
+};
+
+type NovoItem = Pick<ProdutoCompra, "nome" | "categoria" | "quantidade">;
 
 type GastoCategoria = {
   nome: Categoria;
@@ -35,234 +71,428 @@ type GastoCategoria = {
 
 type BudgetContextValue = {
   categorias: Categoria[];
-  items: Item[];
+  items: ProdutoCompra[];
+  listaAtiva: ListaCompra | null;
+  listasFinalizadas: ListaCompra[];
   orcamentoTotal: number;
   valorGasto: number;
   orcamentoRestante: number;
   gastosPorCategoria: GastoCategoria[];
   carregandoDados: boolean;
   definirOrcamentoTotal: (valor: number) => void;
-  adicionarItem: (item: NovoItem) => void;
-  deletarItem: (id: number) => void;
-  incrementarQuantidade: (id: number) => void;
-  decrementarQuantidade: (id: number) => void;
-  listarItensPorCategoria: (categoria: Categoria) => Item[];
+  adicionarItem: (item: NovoItem) => Promise<void>;
+  deletarItem: (id: number) => Promise<void>;
+  incrementarQuantidade: (id: number) => Promise<void>;
+  decrementarQuantidade: (id: number) => Promise<void>;
+  definirQuantidade: (id: number, quantidade: number) => Promise<void>;
+  concluirProduto: (id: number, valorUnitario: number) => Promise<void>;
+  reabrirProduto: (id: number) => Promise<void>;
+  finalizarLista: (nome?: string) => Promise<void>;
+  listarItensPorCategoria: (categoria: Categoria) => ProdutoCompra[];
   totalCategoria: (categoria: Categoria) => number;
 };
 
-type DadosSalvos = {
-  orcamentoTotal: number;
-  items: Item[];
+type BudgetDoc = {
+  orcamentoTotal?: number;
 };
 
 const categorias: Categoria[] = ["Mercado", "Frios", "Limpeza", "Pets"];
 const corCategoria: Record<Categoria, string> = {
   Mercado: "#f2c94c",
   Frios: "#6c5ce7",
-  Limpeza: "#7c6df2",
+  Limpeza: "#2f9e72",
   Pets: "#e17055",
-};
-
-const dadosIniciais: DadosSalvos = {
-  orcamentoTotal: 0,
-  items: [],
 };
 
 const BudgetContext = createContext<BudgetContextValue | undefined>(undefined);
 
-const calcularValorItem = (item: Pick<Item, "quantidade" | "valorUnitario">) =>
-  item.quantidade * item.valorUnitario;
+const usuarioDocRef = (uid: string) => doc(db, "users", uid);
+const budgetDocRef = (uid: string) => doc(db, "users", uid, "budget", "current");
+const shoppingListsRef = (uid: string) => collection(db, "users", uid, "shoppingLists");
 
-// Garante que as cores dos itens continuem coerentes mesmo ao recarregar dados antigos.
-const normalizarItem = (item: Item): Item => ({
-  ...item,
-  cor: corCategoria[item.categoria],
-});
+const calcularTotais = (produtos: ProdutoCompra[]) => {
+  const produtosComprados = produtos.filter((produto) => produto.status === "concluido");
+  const porCategoria = produtosComprados.reduce<Record<string, number>>((acc, produto) => {
+    acc[produto.categoria] = (acc[produto.categoria] ?? 0) + (produto.subtotal ?? 0);
+    return acc;
+  }, {});
+  const totalFinal = produtosComprados.reduce((total, produto) => total + (produto.subtotal ?? 0), 0);
 
-const usuarioDocRef = (uid: string) => doc(db, "usuarios", uid);
-const orcamentoDocRef = (uid: string) => doc(db, "usuarios", uid, "orcamento", "atual");
+  return {
+    categorias: Array.from(new Set(produtos.map((produto) => produto.categoria))),
+    valores: {
+      total: totalFinal,
+      quantidadeProdutos: produtos.reduce((total, produto) => total + produto.quantidade, 0),
+    },
+    totais: {
+      totalFinal,
+      porCategoria,
+    },
+  };
+};
+
+const normalizarProduto = (produto: Partial<ProdutoCompra>): ProdutoCompra => {
+  const categoria = (produto.categoria ?? "Mercado") as Categoria;
+  const produtoNormalizado: ProdutoCompra = {
+    id: typeof produto.id === "number" ? produto.id : Date.now(),
+    nome: produto.nome ?? "",
+    categoria,
+    quantidade: typeof produto.quantidade === "number" ? produto.quantidade : 1,
+    cor: produto.cor ?? corCategoria[categoria],
+    status: produto.status ?? "pendente",
+  };
+
+  if (typeof produto.valorUnitario === "number") {
+    produtoNormalizado.valorUnitario = produto.valorUnitario;
+  }
+
+  if (typeof produto.subtotal === "number") {
+    produtoNormalizado.subtotal = produto.subtotal;
+  }
+
+  if (produto.compradoEm) {
+    produtoNormalizado.compradoEm = produto.compradoEm;
+  }
+
+  return produtoNormalizado;
+};
+
+const normalizarLista = (id: string, dados: Partial<ListaCompra>): ListaCompra => {
+  const produtos = Array.isArray(dados.produtos)
+    ? dados.produtos.map((produto) => normalizarProduto(produto))
+    : [];
+  const totaisCalculados = calcularTotais(produtos);
+
+  return {
+    id,
+    nome: dados.nome ?? "Lista do mercado",
+    data: dados.data ?? new Date().toISOString(),
+    status: dados.status ?? "on_market",
+    produtos,
+    categorias: dados.categorias ?? totaisCalculados.categorias,
+    valores: dados.valores ?? totaisCalculados.valores,
+    totais: dados.totais ?? totaisCalculados.totais,
+    notaFiscalImage: dados.notaFiscalImage ?? null,
+    criadaEm: dados.criadaEm,
+    atualizadaEm: dados.atualizadaEm,
+    finalizadaEm: dados.finalizadaEm,
+  };
+};
 
 export function BudgetProvider({ children }: { children: ReactNode }) {
   const [orcamentoTotal, setOrcamentoTotal] = useState(0);
-  const [items, setItems] = useState<Item[]>([]);
+  const [listas, setListas] = useState<ListaCompra[]>([]);
   const [carregandoDados, setCarregandoDados] = useState(true);
   const usuarioAtualRef = useRef<string | null>(null);
-  const podeSalvarRef = useRef(false);
+  const listaAtivaRef = useRef<ListaCompra | null>(null);
+
+  const listasFinalizadas = useMemo(
+    () => listas.filter((lista) => lista.status === "finalizada"),
+    [listas]
+  );
+  const listaAtiva = useMemo(
+    () => listas.find((lista) => lista.status === "on_market") ?? null,
+    [listas]
+  );
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      // Evita gravar no Firestore antes de terminar a leitura inicial do usuario atual.
-      podeSalvarRef.current = false;
+    listaAtivaRef.current = listaAtiva;
+  }, [listaAtiva]);
+
+  useEffect(() => {
+    let unsubscribeBudget: (() => void) | undefined;
+    let unsubscribeLists: (() => void) | undefined;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      unsubscribeBudget?.();
+      unsubscribeLists?.();
       setCarregandoDados(true);
 
       if (!user) {
         usuarioAtualRef.current = null;
-        setOrcamentoTotal(dadosIniciais.orcamentoTotal);
-        setItems(dadosIniciais.items);
+        listaAtivaRef.current = null;
+        setOrcamentoTotal(0);
+        setListas([]);
         setCarregandoDados(false);
         return;
       }
 
       usuarioAtualRef.current = user.uid;
-      const perfilRef = usuarioDocRef(user.uid);
-      const documentoRef = orcamentoDocRef(user.uid);
 
-      try {
-        const perfilSnapshot = await getDoc(perfilRef);
+      await setDoc(
+        usuarioDocRef(user.uid),
+        {
+          email: user.email ?? "",
+          perfil: "padrao",
+          atualizadoEm: serverTimestamp(),
+        },
+        { merge: true }
+      );
 
-        // Se o perfil nao existir ainda, o app cria uma estrutura basica para contas antigas.
-        if (!perfilSnapshot.exists()) {
-          await setDoc(
-            perfilRef,
-            {
-              email: user.email ?? "",
-              perfil: "padrao",
-              criadoEm: serverTimestamp(),
-              atualizadoEm: serverTimestamp(),
-            },
-            { merge: true }
+      unsubscribeBudget = onSnapshot(budgetDocRef(user.uid), (snapshot) => {
+        const dados = snapshot.data() as BudgetDoc | undefined;
+        setOrcamentoTotal(typeof dados?.orcamentoTotal === "number" ? dados.orcamentoTotal : 0);
+      });
+
+      unsubscribeLists = onSnapshot(
+        query(shoppingListsRef(user.uid), orderBy("data", "desc")),
+        (snapshot) => {
+          setListas(
+            snapshot.docs.map((documento) =>
+              normalizarLista(documento.id, documento.data() as Partial<ListaCompra>)
+            )
           );
-        } else {
-          await setDoc(
-            perfilRef,
-            {
-              email: user.email ?? "",
-              atualizadoEm: serverTimestamp(),
-            },
-            { merge: true }
-          );
+          setCarregandoDados(false);
+        },
+        () => {
+          setListas([]);
+          setCarregandoDados(false);
         }
-
-        const snapshot = await getDoc(documentoRef);
-
-        if (snapshot.exists()) {
-          const dados = snapshot.data() as Partial<DadosSalvos>;
-          setOrcamentoTotal(typeof dados.orcamentoTotal === "number" ? dados.orcamentoTotal : 0);
-          setItems(Array.isArray(dados.items) ? dados.items.map((item) => normalizarItem(item as Item)) : []);
-        } else {
-          setOrcamentoTotal(0);
-          setItems([]);
-          await setDoc(documentoRef, {
-            ...dadosIniciais,
-            atualizadoEm: serverTimestamp(),
-          });
-        }
-      } catch {
-        setOrcamentoTotal(0);
-        setItems([]);
-      } finally {
-        podeSalvarRef.current = true;
-        setCarregandoDados(false);
-      }
+      );
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribeBudget?.();
+      unsubscribeLists?.();
+      unsubscribeAuth();
+    };
   }, []);
 
-  useEffect(() => {
+  const salvarOrcamento = async (valor: number) => {
     const uid = usuarioAtualRef.current;
+    setOrcamentoTotal(valor);
 
-    if (!uid || !podeSalvarRef.current || carregandoDados) {
+    if (!uid) {
       return;
     }
 
-    const salvar = async () => {
-      try {
-        await setDoc(orcamentoDocRef(uid), {
-          orcamentoTotal,
-          items,
-          atualizadoEm: serverTimestamp(),
-        });
-      } catch {
-        return;
-      }
-    };
+    await setDoc(
+      budgetDocRef(uid),
+      {
+        orcamentoTotal: valor,
+        atualizadoEm: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  };
 
-    salvar();
-  }, [carregandoDados, items, orcamentoTotal]);
+  const criarListaSeNecessario = async () => {
+    const uid = usuarioAtualRef.current;
+
+    if (!uid) {
+      throw new Error("Usuario nao autenticado.");
+    }
+
+    if (listaAtivaRef.current) {
+      return listaAtivaRef.current.id;
+    }
+
+    const agora = new Date().toISOString();
+    const documento = await addDoc(shoppingListsRef(uid), {
+      nome: `Compra ${new Date().toLocaleDateString("pt-BR")}`,
+      data: agora,
+      status: "on_market",
+      produtos: [],
+      categorias: [],
+      valores: { total: 0, quantidadeProdutos: 0 },
+      totais: { totalFinal: 0, porCategoria: {} },
+      notaFiscalImage: null,
+      criadaEm: serverTimestamp(),
+      atualizadaEm: serverTimestamp(),
+    });
+
+    return documento.id;
+  };
+
+  const atualizarProdutosListaAtiva = async (produtos: ProdutoCompra[], listaIdOverride?: string) => {
+    const uid = usuarioAtualRef.current;
+    const listaId = listaIdOverride ?? listaAtivaRef.current?.id;
+
+    if (!uid || !listaId) {
+      return;
+    }
+
+    const totais = calcularTotais(produtos);
+    await updateDoc(doc(db, "users", uid, "shoppingLists", listaId), {
+      produtos,
+      categorias: totais.categorias,
+      valores: totais.valores,
+      totais: totais.totais,
+      atualizadaEm: serverTimestamp(),
+    });
+  };
 
   const valorGasto = useMemo(
-    () => items.reduce((total, item) => total + calcularValorItem(item), 0),
-    [items]
+    () => listasFinalizadas.reduce((total, lista) => total + lista.totais.totalFinal, 0),
+    [listasFinalizadas]
   );
-
   const orcamentoRestante = orcamentoTotal - valorGasto;
 
   const gastosPorCategoria = useMemo(() => {
+    const agrupado = listasFinalizadas.reduce<Record<Categoria, { valor: number; quantidade: number }>>(
+      (acc, lista) => {
+        lista.produtos
+          .filter((produto) => produto.status === "concluido")
+          .forEach((produto) => {
+            acc[produto.categoria] = acc[produto.categoria] ?? { valor: 0, quantidade: 0 };
+            acc[produto.categoria].valor += produto.subtotal ?? 0;
+            acc[produto.categoria].quantidade += produto.quantidade;
+          });
+        return acc;
+      },
+      {} as Record<Categoria, { valor: number; quantidade: number }>
+    );
+
     return categorias
       .map((categoria) => {
-        // O resumo da categoria reaproveita a mesma fonte da tela principal.
-        const itensDaCategoria = items.filter((item) => item.categoria === categoria);
-        const valor = itensDaCategoria.reduce((total, item) => total + calcularValorItem(item), 0);
-        const quantidadeItens = itensDaCategoria.reduce((total, item) => total + item.quantidade, 0);
-
+        const item = agrupado[categoria] ?? { valor: 0, quantidade: 0 };
         return {
           nome: categoria,
-          valor,
-          percentual: valorGasto === 0 ? 0 : (valor / valorGasto) * 100,
+          valor: item.valor,
+          percentual: valorGasto === 0 ? 0 : (item.valor / valorGasto) * 100,
           cor: corCategoria[categoria],
-          quantidadeItens,
+          quantidadeItens: item.quantidade,
         };
       })
       .filter((categoria) => categoria.valor > 0)
       .sort((a, b) => b.valor - a.valor);
-  }, [items, valorGasto]);
+  }, [listasFinalizadas, valorGasto]);
 
   const value = useMemo<BudgetContextValue>(
     () => ({
       categorias,
-      items,
+      items: listaAtiva?.produtos ?? [],
+      listaAtiva,
+      listasFinalizadas,
       orcamentoTotal,
       valorGasto,
       orcamentoRestante,
       gastosPorCategoria,
       carregandoDados,
       definirOrcamentoTotal: (valor) => {
-        setOrcamentoTotal(valor);
+        void salvarOrcamento(valor);
       },
-      adicionarItem: (item) => {
-        // Cada item novo recebe um id simples e a cor padrao da categoria escolhida.
-        setItems((estadoAtual) => [
-          ...estadoAtual,
-          normalizarItem({
-            ...item,
-            id: Date.now(),
-            cor: corCategoria[item.categoria],
-          }),
-        ]);
+      adicionarItem: async (item) => {
+        const listaId = await criarListaSeNecessario();
+        const listaAtual = listaAtivaRef.current;
+        const produtosAtuais = listaAtual?.id === listaId ? listaAtual.produtos : [];
+        const produtoNovo = normalizarProduto({
+          ...item,
+          id: Date.now(),
+          cor: corCategoria[item.categoria],
+          status: "pendente",
+        });
+
+        await atualizarProdutosListaAtiva([...produtosAtuais, produtoNovo], listaId);
       },
-      deletarItem: (id) => {
-        setItems((estadoAtual) => estadoAtual.filter((item) => item.id !== id));
+      deletarItem: async (id) => {
+        await atualizarProdutosListaAtiva((listaAtivaRef.current?.produtos ?? []).filter((item) => item.id !== id));
       },
-      incrementarQuantidade: (id) => {
-        setItems((estadoAtual) =>
-          estadoAtual.map((item) =>
-            item.id === id ? { ...item, quantidade: item.quantidade + 1 } : item
+      incrementarQuantidade: async (id) => {
+        await atualizarProdutosListaAtiva(
+          (listaAtivaRef.current?.produtos ?? []).map((item) =>
+            item.id === id && item.status === "pendente"
+              ? { ...item, quantidade: item.quantidade + 1 }
+              : item
           )
         );
       },
-      decrementarQuantidade: (id) => {
-        setItems((estadoAtual) =>
-          estadoAtual.map((item) => {
+      decrementarQuantidade: async (id) => {
+        await atualizarProdutosListaAtiva(
+          (listaAtivaRef.current?.produtos ?? []).map((item) =>
+            item.id === id && item.status === "pendente"
+              ? { ...item, quantidade: Math.max(1, item.quantidade - 1) }
+              : item
+          )
+        );
+      },
+      definirQuantidade: async (id, quantidade) => {
+        await atualizarProdutosListaAtiva(
+          (listaAtivaRef.current?.produtos ?? []).map((item) =>
+            item.id === id && item.status === "pendente"
+              ? { ...item, quantidade: Math.max(1, quantidade) }
+              : item
+          )
+        );
+      },
+      concluirProduto: async (id, valorUnitario) => {
+        await atualizarProdutosListaAtiva(
+          (listaAtivaRef.current?.produtos ?? []).map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  status: "concluido",
+                  valorUnitario,
+                  subtotal: valorUnitario * item.quantidade,
+                  compradoEm: new Date().toISOString(),
+                }
+              : item
+          )
+        );
+      },
+      reabrirProduto: async (id) => {
+        await atualizarProdutosListaAtiva(
+          (listaAtivaRef.current?.produtos ?? []).map((item) => {
             if (item.id !== id) {
               return item;
             }
 
+            const { valorUnitario, subtotal, compradoEm, ...produtoPendente } = item;
+            void valorUnitario;
+            void subtotal;
+            void compradoEm;
+
             return {
-              ...item,
-              quantidade: Math.max(0, item.quantidade - 1),
+              ...produtoPendente,
+              status: "pendente",
             };
           })
         );
       },
+      finalizarLista: async (nome) => {
+        const uid = usuarioAtualRef.current;
+        const lista = listaAtivaRef.current;
+
+        if (!uid || !lista) {
+          return;
+        }
+
+        const totais = calcularTotais(lista.produtos);
+        await updateDoc(doc(db, "users", uid, "shoppingLists", lista.id), {
+          nome: nome?.trim() || lista.nome,
+          status: "finalizada",
+          notaFiscalImage: null,
+          notaFiscalStatus: "para_atualizacoes_futuras",
+          categorias: totais.categorias,
+          valores: totais.valores,
+          totais: totais.totais,
+          finalizadaEm: serverTimestamp(),
+          atualizadaEm: serverTimestamp(),
+        });
+      },
       listarItensPorCategoria: (categoria) =>
-        items.filter((item) => item.categoria === categoria && item.quantidade > 0),
+        listasFinalizadas.flatMap((lista) =>
+          lista.produtos.filter((item) => item.categoria === categoria && item.status === "concluido")
+        ),
       totalCategoria: (categoria) =>
-        items
-          .filter((item) => item.categoria === categoria)
-          .reduce((total, item) => total + calcularValorItem(item), 0),
+        listasFinalizadas.reduce(
+          (total, lista) =>
+            total +
+            lista.produtos
+              .filter((item) => item.categoria === categoria && item.status === "concluido")
+              .reduce((subtotal, item) => subtotal + (item.subtotal ?? 0), 0),
+          0
+        ),
     }),
-    [carregandoDados, gastosPorCategoria, items, orcamentoRestante, orcamentoTotal, valorGasto]
+    [
+      carregandoDados,
+      gastosPorCategoria,
+      listaAtiva,
+      listasFinalizadas,
+      orcamentoRestante,
+      orcamentoTotal,
+      valorGasto,
+    ]
   );
 
   return <BudgetContext.Provider value={value}>{children}</BudgetContext.Provider>;

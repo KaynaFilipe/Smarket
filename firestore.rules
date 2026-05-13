@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // Cada usuario autenticado so pode acessar o proprio perfil e seus dados financeiros.
-    match /usuarios/{userId} {
+    match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
 
       match /{document=**} {

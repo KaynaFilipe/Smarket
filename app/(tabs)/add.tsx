@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 
+import { BackButton } from "@/components/back-button";
 import { Categoria, useBudget } from "@/context/budget-context";
 
 export default function AddItemScreen() {
@@ -18,21 +19,13 @@ export default function AddItemScreen() {
   const { carregandoDados, categorias, adicionarItem } = useBudget();
   const [nome, setNome] = useState("");
   const [categoria, setCategoria] = useState<Categoria>("Mercado");
-  const [valorUnitario, setValorUnitario] = useState("");
   const [quantidade, setQuantidade] = useState("");
 
-  const salvar = () => {
-    const valor = Number(valorUnitario.replace(",", "."));
+  const salvar = async () => {
     const quantidadeNumerica = Number(quantidade);
 
-    // As validacoes aqui evitam gravar itens inconsistentes no estado global e no Firebase.
     if (!nome.trim()) {
       Alert.alert("Nome obrigatorio", "Informe o nome do item.");
-      return;
-    }
-
-    if (Number.isNaN(valor) || valor <= 0) {
-      Alert.alert("Valor invalido", "Informe um valor unitario maior que zero.");
       return;
     }
 
@@ -41,14 +34,19 @@ export default function AddItemScreen() {
       return;
     }
 
-    adicionarItem({
-      nome: nome.trim(),
-      categoria,
-      quantidade: quantidadeNumerica,
-      valorUnitario: valor,
-    });
+    try {
+      await adicionarItem({
+        nome: nome.trim(),
+        categoria,
+        quantidade: quantidadeNumerica,
+      });
 
-    router.back();
+      setNome("");
+      setQuantidade("");
+      Alert.alert("Produto adicionado", "Ele ja esta na lista On Market.");
+    } catch {
+      Alert.alert("Falha ao salvar", "Nao foi possivel adicionar o produto agora.");
+    }
   };
 
   if (carregandoDados) {
@@ -65,8 +63,11 @@ export default function AddItemScreen() {
     <LinearGradient colors={["#5f9f7a", "#2f5d45"]} style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.card}>
-          <Text style={styles.title}>Adicionar Item</Text>
-          <Text style={styles.subtitle}>Preencha os dados do novo item</Text>
+          <View style={styles.topBar}>
+            <BackButton fallback="/(tabs)" />
+          </View>
+          <Text style={styles.title}>Adicionar Produto</Text>
+          <Text style={styles.subtitle}>Os produtos entram primeiro no On Market</Text>
 
           <Text style={styles.label}>Nome</Text>
           <TextInput
@@ -99,16 +100,6 @@ export default function AddItemScreen() {
             ))}
           </View>
 
-          <Text style={styles.label}>Valor unitario</Text>
-          <TextInput
-            value={valorUnitario}
-            onChangeText={setValorUnitario}
-            style={styles.input}
-            keyboardType="decimal-pad"
-            placeholder="Ex.: 12.50"
-            placeholderTextColor="#90a096"
-          />
-
           <Text style={styles.label}>Quantidade</Text>
           <TextInput
             value={quantidade}
@@ -120,7 +111,13 @@ export default function AddItemScreen() {
           />
 
           <TouchableOpacity style={styles.primaryButton} onPress={salvar}>
-            <Text style={styles.primaryButtonText}>Salvar item</Text>
+            <Text style={styles.primaryButtonText}>Enviar para On Market</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.onMarketButton}
+            onPress={() => router.push("/(tabs)/on-market")}>
+            <Text style={styles.onMarketButtonText}>Abrir On Market</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.secondaryButton} onPress={() => router.back()}>
@@ -153,6 +150,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 3.84,
     elevation: 5,
+  },
+  topBar: {
+    minHeight: 32,
+    alignItems: "flex-start",
+    marginBottom: 4,
   },
   title: {
     fontSize: 26,
@@ -220,6 +222,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 10,
     backgroundColor: "#d7dfda",
+  },
+  onMarketButton: {
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: "center",
+    marginTop: 10,
+    backgroundColor: "#f2c94c",
+  },
+  onMarketButtonText: {
+    color: "#294536",
+    fontWeight: "800",
   },
   secondaryButtonText: {
     color: "#3f5d4d",

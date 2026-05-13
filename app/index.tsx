@@ -15,11 +15,12 @@ import {
   View,
 } from "react-native";
 
+import { BackButton } from "@/components/back-button";
 import { auth, db } from "../firebaseConfig";
 
 const garantirEstruturaUsuario = async (uid: string, email: string) => {
-  const perfilRef = doc(db, "usuarios", uid);
-  const orcamentoRef = doc(db, "usuarios", uid, "orcamento", "atual");
+  const perfilRef = doc(db, "users", uid);
+  const orcamentoRef = doc(db, "users", uid, "budget", "current");
   const perfilSnapshot = await getDoc(perfilRef);
   const orcamentoSnapshot = await getDoc(orcamentoRef);
 
@@ -52,7 +53,6 @@ const garantirEstruturaUsuario = async (uid: string, email: string) => {
       orcamentoRef,
       {
         orcamentoTotal: 0,
-        items: [],
         criadoEm: serverTimestamp(),
         atualizadoEm: serverTimestamp(),
       },
@@ -178,6 +178,7 @@ export default function Login() {
 
   return (
     <View style={styles.container}>
+      <BackButton fallback="/" style={styles.loginBackButton} />
       {/* A mesma tela alterna entre login e registro para simplificar a entrada no app. */}
       <Text style={styles.title}>Smarket</Text>
       <Text style={styles.subtitle}>
@@ -280,6 +281,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 20,
     backgroundColor: "#f3f5f4",
+  },
+  loginBackButton: {
+    position: "absolute",
+    top: 54,
+    left: 20,
   },
   title: {
     fontSize: 28,

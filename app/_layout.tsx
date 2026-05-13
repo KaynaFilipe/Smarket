@@ -40,9 +40,8 @@ export default function RootLayout() {
       return;
     }
 
-    if (usuario && !estaNasTabs) {
-      router.replace("/(tabs)");
-    }
+    // Mesmo com sessao salva, a rota inicial continua sendo o login.
+    // O usuario so entra nas tabs depois de tocar em "Entrar".
   }, [router, segments, usuario]);
 
   if (usuario === undefined) {

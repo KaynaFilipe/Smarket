@@ -1,6 +1,6 @@
+import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter } from "expo-router";
-import React from "react";
+import React, { useMemo, useState } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -9,7 +9,8 @@ import {
   View,
 } from "react-native";
 
-import { useBudget } from "@/context/budget-context";
+import { BackButton } from "@/components/back-button";
+import { ListaCompra, useBudget } from "@/context/budget-context";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 
 const formatarMoeda = (valor: number) =>
@@ -18,104 +19,207 @@ const formatarMoeda = (valor: number) =>
     currency: "BRL",
   });
 
+const formatarData = (data: string) =>
+  new Date(data).toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+
+const nomeMes = (data: Date) =>
+  data.toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  });
+
 export default function Gastos() {
-  const router = useRouter();
-  const { carregandoDados, valorGasto, gastosPorCategoria } = useBudget();
-  // A primeira categoria ja chega ordenada pelo contexto, entao ela representa o maior gasto.
+  const { carregandoDados, valorGasto, gastosPorCategoria, listasFinalizadas } = useBudget();
+  const [mesAtual, setMesAtual] = useState(() => new Date());
+  const [diaSelecionado, setDiaSelecionado] = useState<number | null>(null);
+  const [listaSelecionada, setListaSelecionada] = useState<ListaCompra | null>(null);
+
+  const listasDoMes = useMemo(() => {
+    return listasFinalizadas.filter((lista) => {
+      const data = new Date(lista.data);
+      return data.getMonth() === mesAtual.getMonth() && data.getFullYear() === mesAtual.getFullYear();
+    });
+  }, [listasFinalizadas, mesAtual]);
+
+  const diasComCompra = useMemo(
+    () => new Set(listasDoMes.map((lista) => new Date(lista.data).getDate())),
+    [listasDoMes]
+  );
+
+  const diasNoMes = new Date(mesAtual.getFullYear(), mesAtual.getMonth() + 1, 0).getDate();
+  const listasDoDia = diaSelecionado
+    ? listasDoMes.filter((lista) => new Date(lista.data).getDate() === diaSelecionado)
+    : [];
+  const totalMes = listasDoMes.reduce((total, lista) => total + lista.totais.totalFinal, 0);
   const maiorCategoria = gastosPorCategoria[0];
+
+  const navegarMes = (direcao: -1 | 1) => {
+    setListaSelecionada(null);
+    setDiaSelecionado(null);
+    setMesAtual((data) => new Date(data.getFullYear(), data.getMonth() + direcao, 1));
+  };
 
   if (carregandoDados) {
     return (
       <LinearGradient colors={["#5f9f7a", "#2f5d45"]} style={styles.container}>
         <View style={styles.loadingCard}>
-          <Text style={styles.loadingText}>Carregando resumo...</Text>
+          <Text style={styles.loadingText}>Carregando gastos...</Text>
         </View>
+      </LinearGradient>
+    );
+  }
+
+  if (listaSelecionada) {
+    return (
+      <LinearGradient colors={["#5f9f7a", "#2f5d45"]} style={styles.container}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <BackButton
+            fallback="/(tabs)/gastos"
+            light
+            onPress={() => setListaSelecionada(null)}
+            style={styles.backButton}
+          />
+
+          <View style={styles.card}>
+            <Text style={styles.title}>{listaSelecionada.nome}</Text>
+            <Text style={styles.subtitle}>{formatarData(listaSelecionada.data)}</Text>
+            <Text style={styles.value}>{formatarMoeda(listaSelecionada.totais.totalFinal)}</Text>
+
+            {listaSelecionada.notaFiscalImage ? (
+              <Image
+                source={{ uri: listaSelecionada.notaFiscalImage }}
+                style={styles.receiptImage}
+                contentFit="cover"
+              />
+            ) : null}
+
+            {listaSelecionada.categorias.map((categoria) => (
+              <View key={categoria} style={styles.detailSection}>
+                <Text style={styles.detailTitle}>{categoria}</Text>
+                {listaSelecionada.produtos
+                  .filter((produto) => produto.categoria === categoria)
+                  .map((produto) => (
+                    <View key={produto.id} style={styles.detailItem}>
+                      <View>
+                        <Text style={styles.itemName}>{produto.nome}</Text>
+                        <Text style={styles.itemMeta}>
+                          {produto.quantidade} x {formatarMoeda(produto.valorUnitario ?? 0)}
+                        </Text>
+                      </View>
+                      <Text style={styles.itemValue}>{formatarMoeda(produto.subtotal ?? 0)}</Text>
+                    </View>
+                  ))}
+              </View>
+            ))}
+          </View>
+        </ScrollView>
       </LinearGradient>
     );
   }
 
   return (
     <LinearGradient colors={["#5f9f7a", "#2f5d45"]} style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.topBar}>
+          <BackButton fallback="/(tabs)" light />
+        </View>
         <View style={styles.card}>
           <View style={styles.headerIcon}>
             <IconSymbol name="chart.bar.fill" size={24} color="#2f5d45" />
           </View>
-          <Text style={styles.title}>Resumo do Mes</Text>
-          <Text style={styles.subtitle}>Janeiro 2026</Text>
+          <Text style={styles.title}>Gastos</Text>
+          <Text style={styles.subtitle}>Resumo do mes</Text>
+          <Text style={styles.value}>{formatarMoeda(totalMes)}</Text>
+          <Text style={styles.smallCenter}>Total historico: {formatarMoeda(valorGasto)}</Text>
+        </View>
 
-          <View style={styles.divider} />
+        <View style={styles.calendarCard}>
+          <View style={styles.monthRow}>
+            <TouchableOpacity style={styles.monthButton} onPress={() => navegarMes(-1)}>
+              <Text style={styles.monthButtonText}>{"<"}</Text>
+            </TouchableOpacity>
+            <Text style={styles.monthTitle}>{nomeMes(mesAtual)}</Text>
+            <TouchableOpacity style={styles.monthButton} onPress={() => navegarMes(1)}>
+              <Text style={styles.monthButtonText}>{">"}</Text>
+            </TouchableOpacity>
+          </View>
 
-          <Text style={styles.label}>Total Gasto</Text>
-          <Text style={styles.value}>{formatarMoeda(valorGasto)}</Text>
+          <View style={styles.calendarGrid}>
+            {Array.from({ length: diasNoMes }, (_, index) => index + 1).map((dia) => {
+              const temCompra = diasComCompra.has(dia);
+              const selecionado = diaSelecionado === dia;
 
-          <View style={styles.statsContainer}>
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>Media diaria</Text>
-              <Text style={styles.statValue}>
-                {formatarMoeda(valorGasto === 0 ? 0 : valorGasto / 30)}
-              </Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statItem}>
-              <Text style={styles.statLabel}>Categorias ativas</Text>
-              <Text style={styles.statValue}>{gastosPorCategoria.length}</Text>
-            </View>
+              return (
+                <TouchableOpacity
+                  key={dia}
+                  style={[styles.dayCell, selecionado && styles.dayCellActive]}
+                  onPress={() => setDiaSelecionado(dia)}
+                  disabled={!temCompra}>
+                  <Text style={[styles.dayText, selecionado && styles.dayTextActive]}>{dia}</Text>
+                  {temCompra ? <View style={styles.dayDot} /> : null}
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </View>
 
-        <View style={styles.listHeader}>
-          <Text style={styles.listTitle}>Gastos por Categoria</Text>
-          <Text style={styles.listSubtitle}>Toque para ver os itens de cada categoria</Text>
+        {diaSelecionado ? (
+          <View style={styles.listBlock}>
+            <Text style={styles.listTitle}>Listas do dia {diaSelecionado}</Text>
+            {listasDoDia.map((lista) => (
+              <TouchableOpacity
+                key={lista.id}
+                style={styles.purchaseCard}
+                onPress={() => setListaSelecionada(lista)}>
+                {lista.notaFiscalImage ? (
+                  <Image source={{ uri: lista.notaFiscalImage }} style={styles.thumbnail} contentFit="cover" />
+                ) : (
+                  <View style={styles.thumbnailEmpty}>
+                    <Text style={styles.thumbnailText}>NF</Text>
+                  </View>
+                )}
+                <View style={styles.purchaseInfo}>
+                  <Text style={styles.purchaseName}>{lista.nome}</Text>
+                  <Text style={styles.purchaseDate}>{formatarData(lista.data)}</Text>
+                </View>
+                <Text style={styles.purchaseValue}>{formatarMoeda(lista.totais.totalFinal)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.listBlock}>
+          <Text style={styles.listTitle}>Categorias</Text>
+          {gastosPorCategoria.length === 0 ? (
+            <Text style={styles.emptyText}>Finalize uma lista no On Market para gerar o resumo.</Text>
+          ) : (
+            gastosPorCategoria.map((item, index) => (
+              <View key={item.nome} style={[styles.categoryRow, index === 0 && styles.categoryRowTop]}>
+                <View style={[styles.categoryBadge, { backgroundColor: item.cor }]}>
+                  <Text style={styles.categoryBadgeText}>{item.nome.charAt(0)}</Text>
+                </View>
+                <View style={styles.purchaseInfo}>
+                  <Text style={styles.purchaseName}>{item.nome}</Text>
+                  <Text style={styles.purchaseDate}>{item.percentual.toFixed(1)}% do total</Text>
+                </View>
+                <Text style={styles.purchaseValue}>{formatarMoeda(item.valor)}</Text>
+              </View>
+            ))
+          )}
         </View>
 
-        {/* Cada card abre a tela de detalhe reutilizando o nome da categoria como parametro da rota. */}
-        {gastosPorCategoria.map((item, index) => (
-          <TouchableOpacity
-            key={item.nome}
-            style={[styles.item, index === 0 && styles.firstItem]}
-            activeOpacity={0.7}
-            onPress={() =>
-              router.push({
-                pathname: "/(tabs)/categoria/[categoria]",
-                params: { categoria: item.nome },
-              })
-            }>
-            <View style={styles.itemLeft}>
-              <View style={[styles.badge, { backgroundColor: item.cor }]}>
-                <Text style={styles.badgeText}>{item.nome.charAt(0)}</Text>
-              </View>
-              <View>
-                <Text style={styles.itemName}>{item.nome}</Text>
-                <Text style={styles.itemPercentual}>{item.percentual.toFixed(1)}% do total</Text>
-              </View>
-            </View>
-
-            <View style={styles.itemRight}>
-              <Text style={styles.itemValue}>{formatarMoeda(item.valor)}</Text>
-              <Text style={styles.itemCount}>{item.quantidadeItens} unidades</Text>
-              <View style={styles.progressBarContainer}>
-                <View
-                  style={[
-                    styles.progressBar,
-                    { width: `${item.percentual}%`, backgroundColor: item.cor },
-                  ]}
-                />
-              </View>
-            </View>
-          </TouchableOpacity>
-        ))}
-
-        <View style={styles.tipsCard}>
-          <Text style={styles.tipsTitle}>Dica de economia</Text>
-          <Text style={styles.tipsText}>
+        <View style={styles.tipCard}>
+          <Text style={styles.tipTitle}>Dica</Text>
+          <Text style={styles.tipText}>
             {maiorCategoria
-              ? `A categoria "${maiorCategoria.nome}" lidera seus gastos. Toque nela para ver exatamente onde o valor foi usado.`
-              : "Adicione itens para ver um resumo detalhado dos seus gastos."}
+              ? `${maiorCategoria.nome} lidera seus gastos finalizados neste periodo.`
+              : "O resumo aparece aqui somente depois que uma lista for finalizada."}
           </Text>
         </View>
-
-        <View style={styles.bottomSpacer} />
       </ScrollView>
     </LinearGradient>
   );
@@ -125,195 +229,236 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  content: {
+    padding: 20,
+    paddingBottom: 110,
+    gap: 16,
+  },
+  topBar: {
+    minHeight: 32,
+    alignItems: "flex-start",
+  },
   card: {
     backgroundColor: "#e9eceb",
-    margin: 20,
-    marginTop: 40,
-    padding: 25,
-    borderRadius: 25,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: "bold",
-    textAlign: "center",
-    color: "#2f5d45",
+    padding: 22,
+    borderRadius: 26,
+    gap: 8,
   },
   headerIcon: {
     alignItems: "center",
-    marginBottom: 10,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: "900",
+    textAlign: "center",
+    color: "#2f5d45",
   },
   subtitle: {
     textAlign: "center",
-    color: "#666",
-    marginTop: 5,
-    fontSize: 14,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#d3dcd7",
-    marginVertical: 15,
-  },
-  label: {
-    textAlign: "center",
-    color: "#666",
-    fontSize: 14,
-    marginBottom: 5,
+    color: "#66766d",
   },
   value: {
-    fontSize: 42,
-    fontWeight: "bold",
+    fontSize: 34,
+    fontWeight: "900",
     textAlign: "center",
     color: "#2f5d45",
-    marginBottom: 20,
+    fontVariant: ["tabular-nums"],
   },
-  statsContainer: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    marginTop: 10,
-    paddingTop: 15,
-    borderTopWidth: 1,
-    borderTopColor: "#d3dcd7",
-  },
-  statItem: {
-    alignItems: "center",
-    flex: 1,
-  },
-  statLabel: {
+  smallCenter: {
+    textAlign: "center",
+    color: "#66766d",
     fontSize: 12,
-    color: "#666",
-    marginBottom: 5,
   },
-  statValue: {
-    fontSize: 16,
-    fontWeight: "bold",
+  calendarCard: {
+    backgroundColor: "#fff",
+    borderRadius: 22,
+    padding: 16,
+    gap: 14,
+  },
+  monthRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  monthButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: "#dce7e0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  monthButtonText: {
     color: "#2f5d45",
+    fontSize: 28,
+    fontWeight: "900",
   },
-  statDivider: {
-    width: 1,
-    backgroundColor: "#d3dcd7",
-    marginHorizontal: 10,
+  monthTitle: {
+    color: "#2f5d45",
+    fontSize: 17,
+    fontWeight: "900",
+    textTransform: "capitalize",
   },
-  listHeader: {
-    marginHorizontal: 20,
-    marginBottom: 15,
-    marginTop: 10,
+  calendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
-  listTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
+  dayCell: {
+    width: 38,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: "#edf3ef",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dayCellActive: {
+    backgroundColor: "#2f5d45",
+  },
+  dayText: {
+    color: "#6c7a73",
+    fontWeight: "800",
+  },
+  dayTextActive: {
     color: "#fff",
   },
-  listSubtitle: {
-    fontSize: 12,
-    color: "#d3dcd7",
-    marginTop: 2,
+  dayDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#f2c94c",
+    marginTop: 3,
   },
-  item: {
+  listBlock: {
+    gap: 10,
+  },
+  listTitle: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "900",
+  },
+  purchaseCard: {
     backgroundColor: "#fff",
-    marginHorizontal: 20,
-    marginBottom: 12,
-    padding: 15,
-    borderRadius: 15,
+    borderRadius: 18,
+    padding: 12,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 1,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    gap: 10,
   },
-  firstItem: {
+  thumbnail: {
+    width: 52,
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: "#dce7e0",
+  },
+  thumbnailEmpty: {
+    width: 52,
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: "#dce7e0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  thumbnailText: {
+    color: "#2f5d45",
+    fontWeight: "900",
+  },
+  purchaseInfo: {
+    flex: 1,
+  },
+  purchaseName: {
+    color: "#2f3f36",
+    fontWeight: "900",
+  },
+  purchaseDate: {
+    color: "#6b7a72",
+    fontSize: 12,
+    marginTop: 3,
+  },
+  purchaseValue: {
+    color: "#2f5d45",
+    fontWeight: "900",
+  },
+  categoryRow: {
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  categoryRowTop: {
     borderWidth: 2,
     borderColor: "#f2c94c",
   },
-  itemLeft: {
-    flexDirection: "row",
+  categoryBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     alignItems: "center",
-    flex: 1,
-  },
-  badge: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
     justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
   },
-  badgeText: {
+  categoryBadgeText: {
     color: "#fff",
-    fontSize: 18,
-    fontWeight: "bold",
+    fontWeight: "900",
   },
-  itemName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-  },
-  itemPercentual: {
-    fontSize: 12,
-    color: "#666",
-    marginTop: 2,
-  },
-  itemRight: {
-    alignItems: "flex-end",
-    flex: 1,
-  },
-  itemValue: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#2f5d45",
-    marginBottom: 4,
-  },
-  itemCount: {
-    fontSize: 11,
-    color: "#6c7a73",
-    marginBottom: 6,
-  },
-  progressBarContainer: {
-    width: "100%",
-    height: 4,
-    backgroundColor: "#e9eceb",
-    borderRadius: 2,
-    overflow: "hidden",
-  },
-  progressBar: {
-    height: "100%",
-    borderRadius: 2,
-  },
-  tipsCard: {
+  tipCard: {
     backgroundColor: "#fff9e6",
-    marginHorizontal: 20,
-    marginTop: 20,
+    borderRadius: 18,
     padding: 15,
-    borderRadius: 15,
     borderLeftWidth: 4,
     borderLeftColor: "#f2c94c",
   },
-  tipsTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
+  tipTitle: {
     color: "#2f5d45",
-    marginBottom: 8,
+    fontWeight: "900",
+    marginBottom: 5,
   },
-  tipsText: {
-    fontSize: 14,
+  tipText: {
     color: "#555",
     lineHeight: 20,
   },
-  bottomSpacer: {
-    height: 20,
+  detailSection: {
+    gap: 8,
+    marginTop: 8,
+  },
+  detailTitle: {
+    color: "#2f5d45",
+    fontSize: 17,
+    fontWeight: "900",
+  },
+  detailItem: {
+    backgroundColor: "#fff",
+    borderRadius: 15,
+    padding: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  itemName: {
+    color: "#2f3f36",
+    fontWeight: "900",
+  },
+  itemMeta: {
+    color: "#6b7a72",
+    marginTop: 3,
+    fontSize: 12,
+  },
+  itemValue: {
+    color: "#2f5d45",
+    fontWeight: "900",
+  },
+  receiptImage: {
+    width: "100%",
+    height: 260,
+    borderRadius: 18,
+    backgroundColor: "#dce7e0",
+  },
+  backButton: {
+    alignSelf: "flex-start",
+  },
+  emptyText: {
+    color: "#e9eceb",
   },
   loadingCard: {
     flex: 1,

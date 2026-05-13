@@ -3,7 +3,6 @@ import { useRouter } from "expo-router";
 import { signOut } from "firebase/auth";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -12,6 +11,7 @@ import {
 } from "react-native";
 
 import { useBudget } from "@/context/budget-context";
+import { BackButton } from "@/components/back-button";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { auth } from "../../firebaseConfig";
 
@@ -24,18 +24,13 @@ const formatarMoeda = (valor: number) =>
 export default function Home() {
   const router = useRouter();
   const {
-    categorias,
     carregandoDados,
-    items,
+    listaAtiva,
     orcamentoTotal,
     valorGasto,
     orcamentoRestante,
     definirOrcamentoTotal,
-    deletarItem,
-    incrementarQuantidade,
-    decrementarQuantidade,
   } = useBudget();
-  const [categoriaAtiva, setCategoriaAtiva] = useState("Tudo");
   const [orcamentoInput, setOrcamentoInput] = useState(String(orcamentoTotal));
   const saindoRef = useRef(false);
 
@@ -46,10 +41,9 @@ export default function Home() {
   // O filtro permite visualizar todos os itens ou apenas uma categoria por vez.
   const percentualGasto = orcamentoTotal === 0 ? 0 : (valorGasto / orcamentoTotal) * 100;
 
-  const itemsFiltrados =
-    categoriaAtiva === "Tudo"
-      ? items.filter((item) => item.quantidade > 0)
-      : items.filter((item) => item.categoria === categoriaAtiva && item.quantidade > 0);
+  const produtosAtivos = listaAtiva?.produtos ?? [];
+  const produtosPendentes = produtosAtivos.filter((item) => item.status === "pendente").length;
+  const produtosConcluidos = produtosAtivos.filter((item) => item.status === "concluido").length;
 
   if (carregandoDados) {
     return (
@@ -78,20 +72,20 @@ export default function Home() {
     }
 
     saindoRef.current = true;
-    router.replace("/");
-
-    // A navegacao acontece primeiro para deixar a saida imediata.
-    void signOut(auth).catch(() => {
+    try {
+      await signOut(auth);
+      router.replace("/");
+    } catch {
       saindoRef.current = false;
       alert("Nao foi possivel sair agora.");
-    });
+    }
   };
 
   return (
     <LinearGradient colors={["#5f9f7a", "#2f5d45"]} style={styles.container}>
       <View style={styles.card}>
         <View style={styles.headerRow}>
-          <View />
+          <BackButton fallback="/" />
           <TouchableOpacity
             style={styles.logoutButton}
             onPress={sairDaConta}
@@ -105,8 +99,8 @@ export default function Home() {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.title}>Orcamento</Text>
-        <Text style={styles.month}>Janeiro 2026</Text>
+          <Text style={styles.title}>Orcamento</Text>
+          <Text style={styles.month}>Janeiro 2026</Text>
 
         <View style={styles.orcamentoEditor}>
           <Text style={styles.orcamentoLabel}>Orcamento total</Text>
@@ -155,79 +149,28 @@ export default function Home() {
           <Text style={styles.labelValue}>{formatarMoeda(valorGasto)}</Text>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.categoriesScroll}
-          contentContainerStyle={styles.categoriesContainer}>
-          {/* "Tudo" reaproveita a mesma listagem sem criar uma categoria extra no banco. */}
-          {["Tudo", ...categorias].map((categoria) => (
-            <TouchableOpacity
-              key={categoria}
-              style={[
-                styles.category,
-                categoriaAtiva === categoria && styles.categoryActive,
-              ]}
-              onPress={() => setCategoriaAtiva(categoria)}>
-              <Text
-                style={[
-                  styles.categoryText,
-                  categoriaAtiva === categoria && styles.categoryTextActive,
-                ]}>
-                {categoria}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        <ScrollView style={styles.listaContainer} showsVerticalScrollIndicator={false}>
-          {itemsFiltrados.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyStateText}>Nenhum item encontrado nesta categoria</Text>
+        <View style={styles.flowCard}>
+          <Text style={styles.flowTitle}>Fluxo de compras</Text>
+          <Text style={styles.flowText}>
+            Adicionar Produtos {">"} On Market {">"} Finalizacao {">"} Gastos
+          </Text>
+          <View style={styles.flowStats}>
+            <View style={styles.flowStat}>
+              <Text style={styles.flowStatValue}>{produtosPendentes}</Text>
+              <Text style={styles.flowStatLabel}>pendentes</Text>
             </View>
-          ) : (
-            // Os controles alteram apenas o estado global; o contexto cuida da persistencia no Firestore.
-            itemsFiltrados.map((item) => (
-              <View key={item.id} style={styles.item}>
-                <View style={styles.itemInfo}>
-                  <View style={[styles.badge, { backgroundColor: item.cor }]}>
-                    <Text style={styles.badgeText}>{item.nome}</Text>
-                  </View>
-                  <View style={styles.itemTotals}>
-                    <Text style={styles.itemValor}>
-                      {formatarMoeda(item.quantidade * item.valorUnitario)}
-                    </Text>
-                    <Text style={styles.itemUnitario}>
-                      {formatarMoeda(item.valorUnitario)} por unidade
-                    </Text>
-                  </View>
-                </View>
+            <View style={styles.flowStat}>
+              <Text style={styles.flowStatValue}>{produtosConcluidos}</Text>
+              <Text style={styles.flowStatLabel}>concluidos</Text>
+            </View>
+          </View>
+        </View>
 
-                <View style={styles.actions}>
-                  <TouchableOpacity
-                    style={styles.btnSmall}
-                    onPress={() => incrementarQuantidade(item.id)}>
-                    <Text style={styles.btnText}>+</Text>
-                  </TouchableOpacity>
-
-                  <Text style={styles.qty}>{item.quantidade}</Text>
-
-                  <TouchableOpacity
-                    style={styles.btnSmall}
-                    onPress={() => decrementarQuantidade(item.id)}>
-                    <Text style={styles.btnText}>-</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.delete}
-                    onPress={() => deletarItem(item.id)}>
-                    <Text style={styles.deleteText}>x</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))
-          )}
-        </ScrollView>
+        <TouchableOpacity
+          style={styles.onMarketButton}
+          onPress={() => router.push("/(tabs)/on-market")}>
+          <Text style={styles.onMarketButtonText}>Abrir On Market</Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.addButton}
@@ -269,7 +212,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 6,
+    minHeight: 40,
+    marginBottom: 8,
   },
   logoutButton: {
     flexDirection: "row",
@@ -514,6 +458,56 @@ const styles = StyleSheet.create({
     color: "#999",
     fontSize: 14,
     textAlign: "center",
+  },
+  flowCard: {
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 20,
+    gap: 10,
+  },
+  flowTitle: {
+    color: "#2f5d45",
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  flowText: {
+    color: "#62756a",
+    fontSize: 13,
+  },
+  flowStats: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  flowStat: {
+    flex: 1,
+    backgroundColor: "#e8f2ec",
+    borderRadius: 14,
+    padding: 12,
+    alignItems: "center",
+  },
+  flowStatValue: {
+    color: "#2f5d45",
+    fontSize: 24,
+    fontWeight: "900",
+    fontVariant: ["tabular-nums"],
+  },
+  flowStatLabel: {
+    color: "#607168",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  onMarketButton: {
+    backgroundColor: "#2f5d45",
+    borderRadius: 16,
+    paddingVertical: 15,
+    alignItems: "center",
+    marginTop: 14,
+  },
+  onMarketButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "800",
   },
   loadingCard: {
     width: "84%",
